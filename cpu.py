@@ -6,7 +6,7 @@ class CPU:
         self._a = 0 # accumulator register
         self._x = 0 # x register
         self._y = 0 # y register
-        self._sp = 0 # stack pointer
+        self._sp = 0xFD # stack pointer
         self._p = 0b00000000 #(NVss-DIZC)
         self._pc = 0 # program counter
         self._rom = rom
@@ -151,7 +151,7 @@ class CPU:
             ('ADC', 4, 4),
             ('ROR', 4, 6),
             ('RRA', 4, 6),
-            ('SEI', 0, 2),
+            ('SEI', 0, 1), #Cycle should be 1? not 2
             ('ADC', 10, 4),
             ('NOP', 0, 2),
             ('RRA', 10, 7),
@@ -292,10 +292,9 @@ class CPU:
         self._boot()
         while(self._running):
             while(not self._interupted):
-                code = self._memory.get(self._pc)
                 self._execute_opcode(
-                    code,
-                    self._translate_opcode(str(code))
+                    self._memory.get(self._pc),
+                    self._memory.get_opcode(self._pc)
                 )
             while(self._interupted):
                 pass
@@ -321,8 +320,10 @@ class CPU:
         Load ROM into memory
         '''
         for i, byte in enumerate(self._rom.prg_bytes):
-            if i < self._memory.len(): # TODO fix this
-                self._memory.set(i, byte)
+            self._memory.set_hex(
+                i, 
+                byte
+            )
 
     def reset(self):
         '''
@@ -340,15 +341,15 @@ class CPU:
         Dump system information for debugging
         purposes
         '''
-        print("\n\nException occured: {error} \nSystem Haulted!")
-        print(f"\tInstr: {cur_cmd}")
-        print(f"\tAdr Mode: {mode}")
-        print(f"\tA reg: {self._a}")
-        print(f"\tX reg: {self._x}")
-        print(f"\tY reg: {self._y}")
-        print(f"\tSP reg: {self._sp}")
-        print(f"\tP reg: {self._p}")
-        print(f"\tPC reg: {self._pc}")
+        print(f"\n\nException occured: {error} \nSystem Haulted!\n")
+        print(f"Instr: {cur_cmd}")
+        print(f"Adr Mode: {mode}")
+        print(f"A reg: {self._a}")
+        print(f"X reg: {self._x}")
+        print(f"Y reg: {self._y}")
+        print(f"SP reg: {self._sp}")
+        print(f"P reg: {self._p}")
+        print(f"PC reg: {self._pc}")
         exit("\n")
 
     def _get_mode(self, index):
@@ -356,366 +357,352 @@ class CPU:
         Get addressing mode of opcode
         '''
         return self._address_modes[index]
-    
-    def _translate_opcode(self, opcode):
-        '''
-        Translate opcode into decimal for table
-        lookup
-        '''
-        return int(opcode)
-    
-    def generate_interrupts(self):
-        pass
 
-    def _execute_opcode(self, opcode, op_num):
+    def _execute_opcode(self, opcode: bytes, op_num: int) -> None:
         '''
         Method for executing a opcode
         '''
         entry = self._opcodes[op_num]
         func = entry[0]
         mode = self._address_modes[entry[1]] #for debug
-        print(f'{op_num}: {opcode} -> {func} {mode[2]}')
-        self._pc += mode[1]
+        print(f'{opcode}: {op_num} -> {func} {mode[2]}')
         getattr(self, f'_{func}')(
             entry[1], 
             mode[1],
             entry[2]
         )
+    
+    def _get_address(self, mode):
+        '''
+        Determine memory address given the adressing mode
+        '''
+        if mode == 0: # implicit
+            return 0
+        elif mode == 1: # accumulator
+            return 0
+        elif mode == 2: # immediate
+            return int(self._pc + 1)
+        elif mode == 3: # zero page
+            l = self._memory.get(self._pc + 1)
+            return int('00' + l, 16)
+        elif mode == 4: # zero Page,x
+            zp = self._memory.get(self._pc + 1)
+            adr = int(zp) + self._x
+            if adr <= 255:
+                return adr
+            else:
+                return (adr-255)
+        elif mode == 5: # zero page,y
+            zp = self._memory.get(self._pc + 1)
+            adr = int(zp) + self._y
+            if adr <= 255:
+                return adr
+            else:
+                return (adr-255)
+        elif mode == 6: # Indexed Indirect
+            ip = self._memory.get(self._pc + 1)
+            adr = int(ip) + self._x
+            if adr <= 255:
+                return adr
+            else:
+                return (adr-255)
+        elif mode == 7: # Indirect Indexed
+            l = self._memory.get(self._pc + 1)
+            return int('00' + l) + self._y
+        elif mode == 8: # absolute
+            m = self._memory.get(self._pc + 2)
+            l = self._memory.get(self._pc + 1)
+            return int(m + l, 16)
+        elif mode == 9: # absolute,X
+            m = self._memory.get(self._pc + 2)
+            l = self._memory.get(self._pc + 1)
+            return int(m + l, 16) + self._x
+        elif mode == 10: # absolute,Y
+            m = self._memory.get(self._pc + 2)
+            l = self._memory.get(self._pc + 1)
+            return int(m + l, 16) + self._y
+        elif mode == 11: #indirect
+            m = self._memory.get(self._pc + 2)
+            l = self._memory.get(self._pc + 1)
+            return int(m + l, 16) + self._x
+        elif mode == 12: #relative
+            l = self._memory.get(self._pc + 1)
+            return self._pc + int(l, 16)
 
     def _ADC(self, mode, args, cycles):
         '''
         Add with Carry
         A:=A+{adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        if mode == 2:
-            self._a = self._a + self._memory.get()
-        elif mode == 3:
-            self._a = self._a + self._memory.get()
-        elif mode == 4:
-            self._a = self._a + self._memory.get()
-        elif mode == 6:
-            # +1 cycle if page crossed
-            self._a = self._a + self._memory.get()
-        elif mode == 7:
-            # +1 cycle if page crossed
-            self._a = self._a + self._memory.get()
-        elif mode == 8:
-            self._a = self._a + self._memory.get()
-        elif mode == 9:
-            # +1 cycle if page crossed
-            self._a = self._a + self._memory.get()
-        elif mode == 10:
-            # +1 cycle if page crossed
-            self._a = self._a + self._memory.get()
-        else:
-            self._system_dump('ADC', mode, args, "Invalid mode number")
-            
+        value = 0
+        adr = self._get_address(mode)
+        self._a += value
+        #self._system_dump('ADC', mode, args, "Invalid mode number")
+        
+        self._pc += args
 
 
     def _AND(self, mode, args, cycles):
         '''
         Logical AND
         A:=A&{adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        if mode == 2:
-            self._a = self._a & self._memory.get()
-        elif mode == 3:
-            self._a = self._a & self._memory.get()
-        elif mode == 4:
-            self._a = self._a & self._memory.get()
-        elif mode == 6:
-            # +1 cycle if page crossed
-            self._a = self._a & self._memory.get()
-        elif mode == 7:
-            # +1 cycle if page crossed
-            self._a = self._a & self._memory.get()
-        elif mode == 8:
-            self._a = self._a & self._memory.get()
-        elif mode == 9:
-            # +1 cycle if page crossed
-            self._a = self._a & self._memory.get()
-        elif mode == 10:
-            # +1 cycle if page crossed
-            self._a = self._a & self._memory.get()
-        else:
-            self._system_dump('AND', mode, args, "Invalid mode number")
-
+        adr = self._get_address(mode)
+        self._a = self._a & self._memory.get_int(adr)
+        #self._system_dump('AND', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _ASL(self, mode, args, cycles):
         '''
         Arithmetic Shift left
         {adr}:={adr}*2
+        modes 1,3,4,8,9
         '''
         val = 0
-        loc = 0
-        if mode == 1: # acc
-            self._memory.set(val, loc) 
-        elif mode == 3: # zp
-            self._memory.set(val, loc) 
-        elif mode == 4: #zpx
-            self._memory.set(val, loc) 
-        elif mode == 8: #abs
-            self._memory.set(val, loc) 
-        elif mode == 9: #abx
-            self._memory.set(val, loc) 
-        else:
-            self._system_dump('ASL', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        #self._system_dump('ASL', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _BCC(self, mode, args, cycles):
         '''
         Branch if carry flag clear
         branch on C=0
+        modes 12
         '''
-        if mode == 12:
-            if not self._p & (1 << 1):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BCC', mode, args, "Invalid mode number")
+        self._pc += args
+        if not self._p & (1 << 1):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BCC', mode, args, "Invalid mode number")
 
     def _BCS(self, mode, args, cycles):
         '''
         Branch if carry flag set
         branch on C=1
+        modes 12
         '''
-        if mode == 12:
-            if self._p & (1 << 0):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BCS', mode, args, "Invalid mode number")
+        self._pc += args
+        if self._p & (1 << 0):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BCS', mode, args, "Invalid mode number")
 
     def _BEQ(self, mode, args, cycles):
         '''
         Branch if zero flag set
         branch on Z=1
+        modes 12
         '''
-        if mode == 12:
-            if self._p & (1 << 1):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BEQ', mode, args, "Invalid mode number")
+        self._pc += args
+        if self._p & (1 << 1):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BEQ', mode, args, "Invalid mode number")
 
     def _BIT(self, mode, args, cycles):
         '''
         Bit Test
         N:=b7 V:=b6 Z:=A&{adr}
         '''
+        adr = self._get_address(mode)
         if mode == 3:
-            pass
+            l = self._memory.get(self._pc + 1)
+            adr = int('00' + l, 16)
         elif mode == 8:
-            pass
+            m = self._memory.get(self._pc + 2)
+            l = self._memory.get(self._pc + 1)
         else:
             self._system_dump('BIT', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _BMI(self, mode, args, cycles):
         '''
         Branch if negative flag set
         branch on N=1
         '''
-        if mode == 12:
-            if self._p & (1 << 7):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else: #12
-            self._system_dump('BMI', mode, args, "Invalid mode number")
+        self._pc += args
+        if self._p & (1 << 7):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BMI', mode, args, "Invalid mode number")
 
     def _BNE(self, mode, args, cycles):
         '''
         Branch if zero flag clear
         branch on Z=0
+        modes 12
         '''
-        if mode == 12:
-            if not self._p & (1 << 1):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BNE', mode, args, "Invalid mode number")
+        self._pc += args
+        if not self._p & (1 << 1):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BNE', mode, args, "Invalid mode number")
 
     def _BPL(self, mode, args, cycles):
         '''
         Branch if negative flag clear
         branch on N=0
+        modes 12
         '''
-        if mode == 12:
-            if not self._p & (1 << 7):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BPL', mode, args, "Invalid mode number")
+        self._pc += args
+        if not self._p & (1 << 7):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        # self._system_dump('BPL', mode, args, "Invalid mode number")
 
     def _BRK(self, mode, args, cycles):
         '''
         Force an interrupt
         (S)-:=PC,P PC:=($FFFE)
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('BRK', mode, args, "Invalid mode number")
+        self._sp -= 1
+        self._memory.set_hex(self._sp, self._pc)
+        self._pc = self._memory.get_int()
+        #self._system_dump('BRK', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _BVC(self, mode, args, cycles):
         '''
         Branch if overflow flag clear
         branch on V=0
+        modes 12
         '''
-        if mode == 12:
-            if not self._p & (1 << 6):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else: #12
-            self._system_dump('BVC', mode, args, "Invalid mode number")
+        self._pc += args
+        if not self._p & (1 << 6):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BVC', mode, args, "Invalid mode number")
 
     def _BVS(self, mode, args, cycles):
         '''
         Branch if overflow flag set
         branch on V=1
+        modes 12
         '''
-        if mode == 12:
-            if self._p & (1 << 6):
-                # +1 cycle if branch succeds
-                # +2 cycle if to a new page
-                pass
-        else:
-            self._system_dump('BVS', mode, args, "Invalid mode number")
+        self._pc += args
+        if self._p & (1 << 6):
+            self._pc = self._get_address(mode)
+            # +1 cycle if branch succeds
+            # +2 cycle if to a new page
+        #self._system_dump('BVS', mode, args, "Invalid mode number")
 
     def _CLC(self, mode, args, cycles):
         '''
         Clear carry flag
         C:=0
+        modes 0
         '''
-        if mode == 0:
-            self._p = self._p & ~( 1 << 0)
-        else:
-            self._system_dump('CLC', mode, args, "Invalid mode number")
+        self._p = self._p & ~( 1 << 0)
+        #self._system_dump('CLC', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _CLD(self, mode, args, cycles):
         '''
         Clear decimal mode flag
         D:=0
+        modes 0
         '''
-        if mode == 0:
-            self._p = self._p & ~( 1 << 3)
-        else:
-            self._system_dump('CLD', mode, args, "Invalid mode number")
+        self._p = self._p & ~( 1 << 3)
+        #self._system_dump('CLD', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _CLI(self, mode, args, cycles):
         '''
         Clear interrupt disable flag
         I:=0
         '''
-        if mode == 0:
-            self._p = self._p & ~( 1 << 2)
-        else:
-            self._system_dump('CLI', mode, args, "Invalid mode number")
+        self._p = self._p & ~( 1 << 2)
+        #self._system_dump('CLI', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _CLV(self, mode, args, cycles):
         '''
         Clear overflow flag
         V:=0
+        modes 0
         '''
-        if mode == 0:
-            self._p = self._p & ~( 1 << 6)
-        else:
-            self._system_dump('CLV', mode, args, "Invalid mode number")
+        self._p = self._p & ~( 1 << 6)
+        #self._system_dump('CLV', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _CMP(self, mode, args, cycles):
         '''
         Compare accumulator
         A-{adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        M = 0
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('CMP', mode, args, "Invalid mode number")
+        value = 0
+        adr = self._get_address(mode)
+        value = self._memory.get_int(adr)
+        #self._system_dump('CMP', mode, args, "Invalid mode number")
 
-        if self._a >= M:
+        if self._a >= value:
             self._p = self._p & ( 1 << 0)
-        if self._a == M:
+        if self._a == value:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _CPX(self, mode, args, cycles):
         '''
         Compare X register
         X-{adr}
+        modes 2,3,8
         '''
-        M = 0
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 8:
-            pass
-        else:
-            self._system_dump('CPX', mode, args, "Invalid mode number")
+        value = 0
+        adr = self._get_address(mode)
+        value = self._memory.get_int(adr)
+        #self._system_dump('CPX', mode, args, "Invalid mode number")
 
-        if self._x >= M:
+        if self._x >= value:
             self._p = self._p & ( 1 << 0)
-        if self._x == M:
+        if self._x == value:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _CPY(self, mode, args, cycles):
         '''
         Compare Y register
         Y-{adr}
+        modes 2,3,8
         '''
-        M = 0
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 8:
-            pass
-        else:
-            self._system_dump('CPY', mode, args, "Invalid mode number")
+        value = 0
+        adr = self._get_address(mode)
+        value = self._memory.get_int(adr)
+        #self._system_dump('CPY', mode, args, "Invalid mode number")
 
-        if self._y >= M:
+        if self._y >= value:
             self._p = self._p & ( 1 << 0)
-        if self._y == M:
+        if self._y == value:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _DEC(self, mode, args, cycles):
         '''
         Decrement a memory location
         {adr}:={adr}-1
+        modes 3,4,8,9
         '''
-        adr = 0
-        if mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('DEC', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._memory.set_hex(
+            adr,
+            self._memory.get_int(adr) - 1
+        )
+        #self._system_dump('DEC', mode, args, "Invalid mode number")
         
         if adr == 0:
             self._p = self._p & ( 1 << 1)
+
+        self._pc += args
 
     def _DEX(self, mode, args, cycles):
         '''
@@ -730,6 +717,8 @@ class CPU:
         if self._x == 0:
             self._p = self._p & ( 1 << 1)
 
+        self._pc += args
+
     def _DEY(self, mode, args, cycles):
         '''
         Decrement the Y register
@@ -743,99 +732,88 @@ class CPU:
         if self._y == 0:
             self._p = self._p & ( 1 << 1)
 
-    def _EOR(self, mode, args, cycles):
+        self._pc += args
+
+    def _EOR(self, mode, args, cycles): #IDK
         '''
         Exclusive OR
         A:=A exor {adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('EOR', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._a = self._a | self._memory.get_int(adr)
+        #self._system_dump('EOR', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+
+        self._pc += args
 
     def _INC(self, mode, args, cycles):
         '''
         Increment a memory location
         {adr}:={adr}+1
+        modes 3,4,8,9
         '''
-        if mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('INC', mode, args, "Invalid mode number")
+        value = 0
+        adr = self._get_address(mode)
+        value = self._memory.get_int(adr) + 1
+        self._memory.set_hex(
+            adr,
+            value
+        )
+        #self._system_dump('INC', mode, args, "Invalid mode number")
 
-        if self._a == 0:
+        if value == 0:
             self._p = self._p & ( 1 << 1)
+
+        self._pc += args
 
     def _INX(self, mode, args, cycles):
         '''
         Increment the X register
         X:=X+1
+        mode 0
         '''
-        if mode == 0:
-            self._x = self._x + 1
-        else:
-            self._system_dump('INX', mode, args, "Invalid mode number")
+        self._x = self._x + 1
+        #self._system_dump('INX', mode, args, "Invalid mode number")
 
         if self._x == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _INY(self, mode, args, cycles):
         '''
         Increment the Y register
         Y:=Y+1
+        modes 0
         '''
-        if mode == 0:
-            self._y = self._y + 1
-        else:
-            self._system_dump('INY', mode, args, "Invalid mode number")
+        self._y = self._y + 1
+        #self._system_dump('INY', mode, args, "Invalid mode number")
 
         if self._y == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _JMP(self, mode, args, cycles):
         '''
         Jump to another location
         PC:={adr}
+        modes 8,11
         '''
-        if mode == 8:
-            pass
-        elif mode == 11:
-            pass
-        else:
-            self._system_dump('JMP', mode, args, "Invalid mode number")
+        self._pc = self._get_address(mode)
+        #self._system_dump('JMP', mode, args, "Invalid mode number")
+        self._pc += args
 
-    def _JSR(self, mode, args, cycles):
+    def _JSR(self, mode, args, cycles): # no working
         '''
         Jump to a subroutine
         (S)-:=PC PC:={adr}
+        modes 8
         '''
-        if mode == 8:
-            pass
-        else:
-            self._system_dump('JSR', mode, args, "Invalid mode number")
+        self._pc = self._get_address(mode)
+        #self._system_dump('JSR', mode, args, "Invalid mode number")
+        self._pc += args
     
     def _KIL(self, mode, args, cycles):
         '''
@@ -843,220 +821,153 @@ class CPU:
         '''
         self.running = False
         self.interupted = True
-        self._system_dump('KIL', mode, args, "Invalid mode number")
+        #self._system_dump('KIL', mode, args, "Invalid mode number")
 
     def _LDA(self, mode, args, cycles):
         '''
         Load accumulator
         A:={adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('LDA', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        #self._system_dump('LDA', mode, args, "Invalid mode number")
         
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _LDX(self, mode, args, cycles):
         '''
         Load X register
         X:={adr}
+        modes 2,3,5,8,10
         '''
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 5:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('LDX', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._x = self._memory.get_int(adr)
+        #self._system_dump('LDX', mode, args, "Invalid mode number")
 
         if self._x == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _LDY(self, mode, args, cycles):
         '''
         Load Y register
         Y:={adr}
+        modes 2,3,4,8,9
         '''
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('LDY', mode, args, "Invalid mode number")
-        
+        adr = self._get_address(mode)
+        self._y = self._memory.get_int(adr)
+        #self._system_dump('LDY', mode, args, "Invalid mode number")
         if self._y == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
 
     def _LSR(self, mode, args, cycles):
         '''
         Logical Shift right
         {adr}:={adr}/2
+        modes 1,3,4,8,9
         '''
-        adr = 0
-        if mode == 1:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('LSR', mode, args, "Invalid mode number")
-        
+        adr = self._get_address(mode)
         if adr == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _NOP(self, mode, args, cycles):
         '''
         No operation
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('NOP', mode, args, "Invalid mode number")
+        #self._system_dump('NOP', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _ORA(self, mode, args, cycles):
         '''
         Logical Inclusive OR
         A:=A or {adr}
+        modes 2,3,4,6,7,8,9,10
         '''
-        if mode == 2:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else: 
-            self._system_dump('ORA', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._a = self._a | self._memory.get_int(adr)
+        #self._system_dump('ORA', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _PHA(self, mode, args, cycles):
         '''
         Pushes a copy of the accumulator on to the stack.
         (S)-:=A
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('PHA', mode, args, "Invalid mode number")
+        self._sp -= 1
+        self._memory.set(self._sp, self._a)
+        #self._system_dump('PHA', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _PHP(self, mode, args, cycles):
         '''
         Push processor status on stack
         (S)-:=P
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('PHP', mode, args, "Invalid mode number")
+        self._sp -= 1
+        self._memory.set(self._sp, self._p)
+        #self._system_dump('PHP', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _PLA(self, mode, args, cycles):
         '''
         Pull accumulator from stack
         A:=+(S)
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('PLA', mode, args, "Invalid mode number")
+        self._a = self._memory.get_int(self._sp)
+        self._sp += 1
+        #self._system_dump('PLA', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _PLP(self, mode, args, cycles):
         '''
         Pull processor status from stack
         P:=+(S)
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('PLP', mode, args, "Invalid mode number")
+        self._p = self._memory.get_int(self._sp)
+        self._sp += 1
+        #self._system_dump('PLP', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _ROL(self, mode, args, cycles):
         '''
         Rotate left
         {adr}:={adr}*2+C
+        modes 1,3,4,8,9
         '''
-        if mode == 1:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('ROL', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        #self._system_dump('ROL', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _ROR(self, mode, args, cycles):
         '''
         Rotate right
         {adr}:={adr}/2+C*128
+        modes 1.3.4.8.9
         '''
-        if mode == 1:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        else:
-            self._system_dump('ROR', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        #self._system_dump('ROR', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _RTI(self, mode, args, cycles):
         '''
@@ -1068,197 +979,166 @@ class CPU:
             self.interupted = False
         else:
             self._system_dump('RTI', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _RTS(self, mode, args, cycles):
         '''
         Return from subroutine
         PC:=+(S)
+        modes 0
         '''
-        if mode == 0:
-            pass
-        else:
-            self._system_dump('RTS', mode, args, "Invalid mode number")
+        self._pc = self._memory.get_int(self._sp)
+        self._sp += 1
+        #self._system_dump('RTS', mode, args, "Invalid mode number")
 
-        if self._a == 0:
-            self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _SBC(self, mode, args, cycles):
         '''
         Subtract with Carry
         A:=A-{adr}
+        modes 0,3,4,6,7,8,9,10
         '''
-        if mode == 0:
-            pass
-        elif mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('SBC', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        #self._system_dump('SBC', mode, args, "Invalid mode number")
 
         self._p = self._p & ( 1 << 0)
+        self._pc += args
 
     def _SEC(self, mode, args, cycles):
         ''' 
         Set carry flag
         C:=1
+        modes 0 
         '''
-        if mode == 0:
-            self._p = self._p & ( 1 << 0 )
-        else:
-            self._system_dump('SEC', mode, args, "Invalid mode number")
+        self._p = self._p & ( 1 << 0 )
+        #self._system_dump('SEC', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _SED(self, mode, args, cycles):
         '''
         Set decimal mode flag
         D:=1
+        modes 0
         '''
-        if mode == 0:
-            self._p = self._p & ( 1 << 3 )
-        else:
-            self._system_dump('SED', mode, args, "Invalid mode number")
+        self._p = self._p & ( 1 << 3 )
+        #self._system_dump('SED', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _SEI(self, mode, args, cycles):
         '''
         Set interrupt disable flag
         I:=1
+        modes 0
         '''
-        if mode == 0:
-            self._p = self._p & ( 1 << 2 )
-        else:
-            self._system_dump('SEI', mode, args, "Invalid mode number")
+        self._p = self._p & ( 1 << 2 )
+        #self._system_dump('SEI', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _STA(self, mode, args, cycles):
         '''
         Store Accumulator
         {adr}:=A
+        modes 3,4,6,7,8,9,10
         '''
-        if mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 6:
-            pass
-        elif mode == 7:
-            pass
-        elif mode == 8:
-            pass
-        elif mode == 9:
-            pass
-        elif mode == 10:
-            pass
-        else:
-            self._system_dump('STA', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._memory.set_hex(adr, self._a)
+        #self._system_dump('STA', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _STX(self, mode, args, cycles):
         '''
         Store X Register
         {adr}:=X
+        modes 3, 5, 8
         '''
-        if mode == 3:
-            pass
-        elif mode == 5:
-            pass
-        elif mode == 8:
-            pass
-        else:
-            self._system_dump('STX', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._memory.set_hex(adr, self._x)
+        #self._system_dump('STX', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _STY(self, mode, args, cycles):
         '''
         Store Y Register
         {adr}:=Y
+        modes 3,4,8
         '''
-        if mode == 3:
-            pass
-        elif mode == 4:
-            pass
-        elif mode == 8:
-            pass
-        else:
-            self._system_dump('STY', mode, args, "Invalid mode number")
+        adr = self._get_address(mode)
+        self._memory.set_hex(adr, self._y)
+        #self._system_dump('STY', mode, args, "Invalid mode number")
+        self._pc += args
 
     def _TAX(self, mode, args, cycles):
         '''
         Transfer A to X
         X:=A
+        modes 0
         '''
-        if mode == 0:
-            self._x = self._a
-        else:
-            self._system_dump('TAX', mode, args, "Invalid mode number")
+        self._x = self._a
+        #self._system_dump('TAX', mode, args, "Invalid mode number")
 
         if self._x == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _TAY(self, mode, args, cycles):
         '''
         Transfer A to Y
         Y:=A
+        modes 0
         '''
-        if mode == 0:
-            self._y = self._a
-        else:
-            self._system_dump('TAY', mode, args, "Invalid mode number")
+        self._y = self._a
+        #self._system_dump('TAY', mode, args, "Invalid mode number")
 
         if self._y == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _TSX(self, mode, args, cycles):
         '''
         Transfer S to X
         X:=S
+        modes 0
         '''
-        if mode == 0:
-            self._x = self.s
-        else:
-            self._system_dump('TSX', mode, args, "Invalid mode number")
+        self._x = self.s
+        #self._system_dump('TSX', mode, args, "Invalid mode number")
 
         if self._x == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _TXA(self, mode, args, cycles):
         '''
         Transfer X to A
         A:=X
+        modes 0
         '''
-        if mode == 0:
-            self._a = self._x
-        else:
-            self._system_dump('TXA', mode, args, "Invalid mode number")
+        self._a = self._x
+        #self._system_dump('TXA', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
 
     def _TXS(self, mode, args, cycles):
         '''
         Transfer X to S
         S:=X
+        modes 0
         '''
-        if mode == 0:
-            self.s = self._x
-        else:
-            self._system_dump('TXS', mode, args, "Invalid mode number")
+        self.s = self._x
+        #self._system_dump('TXS', mode, args, "Invalid mode number")
+        self._pc += args
         
     def _TYA(self, mode, args, cycles):
         '''
         Transfer Y to A
         A:=Y
+        modes 0
         '''
-        if mode == 0:
-            self._a = self._y
-        else:
-            self._system_dump('TYA', mode, args, "Invalid mode number")
+        self._a = self._y
+        #self._system_dump('TYA', mode, args, "Invalid mode number")
 
         if self._a == 0:
             self._p = self._p & ( 1 << 1)
+        self._pc += args
