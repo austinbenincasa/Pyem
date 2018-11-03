@@ -811,9 +811,12 @@ class CPU:
         (S)-:=PC PC:={adr}
         modes 8
         '''
-        self._pc = self._get_address(mode)
-        #self._system_dump('JSR', mode, args, "Invalid mode number")
         self._pc += args
+        self._memory.set_hex(self._sp, self._pc)
+        self._sp -= 1
+        self._pc = self._get_address(mode)
+
+        #self._system_dump('JSR', mode, args, "Invalid mode number")
     
     def _KIL(self, mode, args, cycles):
         '''
